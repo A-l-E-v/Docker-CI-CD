@@ -1,0 +1,67 @@
+stages:
+  - lint
+  - test
+  - package
+  - report
+
+# Job для статического анализа кода
+checkstyle:
+  stage: lint
+  image: maven:3.8.3-openjdk-17
+  script:
+    - cd task-ci
+    - mvn validate
+  tags:
+    - cpu
+  only:
+    - merge_requests
+    - branches
+
+# Job для запуска unit-тестов
+unit-tests:
+  stage: test
+  image: maven:3.8.3-openjdk-17
+  script:
+    - cd task-ci
+    - mvn test
+  artifacts:
+    when: always
+    reports:
+      junit: task-ci/target/surefire-reports/TEST-*.xml
+  tags:
+    - cpu
+  only:
+    - merge_requests
+    - branches
+
+# Job для создания jar-архива
+build-artifact:
+  stage: package
+  image: maven:3.8.3-openjdk-17
+  script:
+    - cd task-ci
+    - mvn package -ntp
+  artifacts:
+    paths:
+      - task-ci/target/*.jar
+  tags:
+    - cpu
+  only:
+    - merge_requests
+    - branches
+
+# Job для выгрузки отчетов
+reports:
+  stage: report
+  image: maven:3.8.3-openjdk-17
+  script:
+    - cd task-ci
+    - mvn site
+  artifacts:
+    paths:
+      - task-ci/target/site/
+  tags:
+    - cpu
+  only:
+    - merge_requests
+    - branches

@@ -1,0 +1,130 @@
+default:
+  tags:
+    - cpu
+  image: gcc:13
+
+stages:
+  - prepare
+  - build
+  - test
+  - deliver
+
+variables:
+  PROJECT_DIR: "${CI_PROJECT_DIR}/task-ci"
+  GTEST_DIR: "${PROJECT_DIR}/3rdparty/googletest"
+  BUILD_DIR: "${PROJECT_DIR}/build"
+  INSTALL_DIR: "${PROJECT_DIR}/dist"
+  TEST_RESULTS_DIR: "${BUILD_DIR}/test_results"
+
+before_script:
+  - apt-get update -yq
+  - apt-get install -yq cmake ninja-build git
+  - cmake --version
+  - mkdir -p ${GTEST_DIR}
+  - mkdir -p ${BUILD_DIR}
+  - mkdir -p ${INSTALL_DIR}
+
+PrepareDependencies:
+  stage: prepare
+  script:
+    - if [ ! -d "${GTEST_DIR}/.git" ]; then
+        git clone --depth 1 --branch release-1.12.1 https://github.com/google/googletest.git ${GTEST_DIR};
+      fi
+  artifacts:
+    paths:
+      - ${GTEST_DIR}/
+    expire_in: 1 week
+
+BuildCode:
+  stage: build
+  needs: ["PrepareDependencies"]
+  script:
+    - cd ${BUILD_DIR}
+    - cmake ${PROJECT_DIR} \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=${INSTALL_DIR} \
+      -G Ninja
+    - cmake --build . --target install --parallel $(nproc)
+    
+    # Принудительное создание структуры директорий
+    - mkdir -p ${INSTALL_DIR}/bin
+    - mkdir -p ${INSTALL_DIR}/lib
+    
+    
+    # Копирование файлов, если install не сработал
+    - >-
+      [ -d "${BUILD_DIR}/bin" ] && cp -r ${BUILD_DIR}/bin/* ${INSTALL_DIR}/bin/ || true
+    - >-
+      [ -d "${BUILD_DIR}/lib" ] && cp -r ${BUILD_DIR}/lib/* ${INSTALL_DIR}/lib/ || true
+
+    # Проверка результатов
+    - echo "=== INSTALL DIR ==="
+    - ls -laR ${INSTALL_DIR}
+  artifacts:
+    paths:
+      - ${BUILD_DIR}/
+      - ${INSTALL_DIR}/
+    expire_in: 1 week
+
+TestCode:
+  stage: test
+  needs: ["BuildCode"]
+  script:
+    - cd ${BUILD_DIR}
+    - mkdir -p ${TEST_RESULTS_DIR}
+    - export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:$LD_LIBRARY_PATH
+    
+    # Проверка наличия тестового бинарника
+    - if [ ! -f "${BUILD_DIR}/bin/CTestExe" ]; then
+        echo "Test executable not found in build dir!";
+        echo "Checking install dir...";
+        ls -la ${INSTALL_DIR}/bin/ || echo "No bin in install dir";
+        exit 1;
+      fi
+    
+    # Запуск тестов
+    - ${BUILD_DIR}/bin/CTestExe --gtest_output="xml:${TEST_RESULTS_DIR}/test_results.xml"
+    - ctest --output-junit ${TEST_RESULTS_DIR}/ctest_results.xml --output-on-failure
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - "${TEST_RESULTS_DIR}/test_results.xml"
+        - "${TEST_RESULTS_DIR}/ctest_results.xml"
+    paths:
+      - "${TEST_RESULTS_DIR}/"
+    expire_in: 1 week
+
+DeliverCode:
+  stage: deliver
+  needs: ["BuildCode"]
+  script:
+    - echo "=== Preparing final artifacts ==="
+    - mkdir -p ${INSTALL_DIR}/exe
+    
+    # Проверка и копирование bin
+    - |
+      if [ -d "${INSTALL_DIR}/bin" ]; then
+        cp -r ${INSTALL_DIR}/bin ${INSTALL_DIR}/exe/
+      else
+        echo "ERROR: bin directory not found in ${INSTALL_DIR}"
+        ls -la ${INSTALL_DIR}
+        exit 1
+      fi
+    
+    # Проверка и копирование lib
+    - |
+      if [ -d "${INSTALL_DIR}/lib" ]; then
+        cp -r ${INSTALL_DIR}/lib ${INSTALL_DIR}/exe/
+      else
+        echo "ERROR: lib directory not found in ${INSTALL_DIR}"
+        ls -la ${INSTALL_DIR}
+        exit 1
+      fi
+    
+    - echo "=== Final artifacts structure ==="
+    - ls -laR ${INSTALL_DIR}/exe
+  artifacts:
+    paths:
+      - ${INSTALL_DIR}/exe/
+    expire_in: 1 month

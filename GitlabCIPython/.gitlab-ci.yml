@@ -1,0 +1,44 @@
+stages:
+  - install
+  - test
+
+InstallRequirements:
+  stage: install
+  tags:
+    - cpu
+  image: python:3.9
+  script:
+    - pip install -r task-testing-python/requirements.txt
+    - pip install -e task-testing-python/  # Установка проекта в режиме разработки
+  artifacts:
+    paths:
+      - task-testing-python/
+
+TestCode:
+  stage: test
+  tags:
+    - cpu
+  image: python:3.9
+  before_script:
+    - pip install pytest pytest-cov
+    - pip install -e task-testing-python/  # Установка проекта в режиме разработки
+  script:
+    - cd task-testing-python
+      # Запускаем тесты с правильным PYTHONPATH
+    - PYTHONPATH=/builds/$CI_PROJECT_PATH/task-testing-python/src python -m pytest tests/ --cov=src --cov-report term-missing --junitxml=junit.xml
+  artifacts:
+    reports:
+      junit: task-testing-python/junit.xml
+    paths:
+      - task-testing-python/coverage.xml
+
+LintCode:
+  stage: test
+  tags:
+    - cpu
+  image: python:3.9
+  before_script:
+    - pip install flake8
+  script:
+    - cd task-testing-python
+    - flake8 src/ --count --exit-zero

@@ -1,0 +1,73 @@
+services:
+  db:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+#      POSTGRES_HOST_AUTH_METHOD: trust  # Разрешаем локальные подключения без пароля
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 40s  # Даем больше времени на инициализацию
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: backend
+    depends_on:
+      db:
+        condition: service_healthy
+      db_init:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  db_init:
+    build: ./backend
+    container_name: db_init
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "sleep 5 &&
+      python /app/init_db.py &&
+      sleep 5 &&
+      python /app/db/init_users.py"
+    environment:
+      DB_HOST: db
+      PYTHONPATH: /app  # Важно: добавляем путь к модулям
+    volumes:
+      - ./db:/app/db
+      - ./backend:/app
+    working_dir: /app
+    restart: on-failure
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8189:80"
+    volumes:
+    - ./frontend/styles.css:/usr/share/nginx/html/static/styles.css
+
+volumes:
+  postgres_data:
